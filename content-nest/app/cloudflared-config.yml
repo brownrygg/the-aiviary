@@ -1,0 +1,22 @@
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  # Root domain - Onboarding dashboard (nginx)
+  - hostname: tanya.rikkcontent.com
+    service: https://nginx:443
+    originRequest:
+      noTLSVerify: true
+
+  # Subdomains
+  - hostname: n8n.tanya.rikkcontent.com
+    service: http://nginx:80
+
+  - hostname: chat.tanya.rikkcontent.com
+    service: http://nginx:80
+
+  - hostname: nocodb.tanya.rikkcontent.com
+    service: http://nginx:80
+
+  # Catch-all
+  - service: http_status:404

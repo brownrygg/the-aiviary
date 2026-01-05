@@ -1,0 +1,15 @@
+{
+  "name": "instagram-analytics-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Instagram Analytics - user's own Instagram business account data",
+  "main": "http-wrapper.js",
+  "scripts": {
+    "start": "node http-wrapper.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.2"
+  },
+  "author": "rikk",
+  "license": "MIT"
+}

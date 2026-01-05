@@ -1,0 +1,8 @@
+anthropic
+google-cloud-aiplatform
+google-cloud-speech
+psycopg2-binary
+pgvector
+python-magic
+requests
+ffmpeg-python

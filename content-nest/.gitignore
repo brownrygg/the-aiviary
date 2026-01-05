@@ -1,0 +1,12 @@
+/.idea
+/.venv
+.env
+docker.env
+docker-compose.development.yml
+/app/nginx/certs/fullchain.pem
+/app/nginx/certs/privkey.pem
+/app/nginx/nginx.conf.template
+
+# Google Cloud credentials (NEVER commit these!)
+/app/credentials/
+credentials/

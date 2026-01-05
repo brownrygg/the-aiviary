@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+anthropic
+pydantic
+psycopg2-binary
+pgvector
+google-cloud-aiplatform
+numpy
+scikit-learn

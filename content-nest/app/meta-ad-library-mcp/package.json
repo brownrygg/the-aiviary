@@ -1,0 +1,15 @@
+{
+  "name": "meta-ad-library-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Meta Ad Library API - competitor ad intelligence",
+  "main": "http-wrapper.js",
+  "scripts": {
+    "start": "node http-wrapper.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.2"
+  },
+  "author": "rikk",
+  "license": "MIT"
+}

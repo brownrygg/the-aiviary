@@ -1,0 +1,307 @@
+---
+volumes:
+  certbot-www:
+  certbot-conf:
+  db_storage:
+  n8n_storage:
+  open-webui:
+  redis_storage:
+
+# Explicitly define the default network for all services
+networks:
+  default:
+    driver: bridge
+
+x-shared: &shared
+  restart: always
+  image: docker.n8n.io/n8nio/n8n:${N8N_VERSION}
+  environment:
+    - DB_TYPE=postgresdb
+    - DB_POSTGRESDB_HOST=postgres
+    - DB_POSTGRESDB_PORT=${POSTGRES_PORT}
+    - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+    - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+    - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    - EXECUTIONS_MODE=queue
+    - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+    - GENERIC_TIMEZONE=${TIMEZONE}
+    - NODE_FUNCTION_ALLOW_BUILTIN=*
+    - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    - N8N_TRUST_PROXY=127.0.0.1
+    - N8N_PROXY_HOPS=1
+    - N8N_TELEMETRY_DISABLED=true
+    - N8N_RUNNERS_ENABLED=true
+    - N8N_SECURE_COOKIE=false
+    - N8N_POSTHOG_DISABLE=true
+    - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+    - N8N_GIT_NODE_DISABLE_BARE_REPOS=true
+    - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+    - QUEUE_BULL_REDIS_HOST=redis
+    - QUEUE_HEALTH_CHECK_ACTIVE=true
+    - WEBHOOK_URL=${WEBHOOK_URL}
+    - VUE_APP_URL_BASE_API=${VUE_APP_URL_BASE_API}
+  networks:
+    - default
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["production"]
+    volumes:
+      - certbot-www:/var/www/certbot:rw
+      - certbot-conf:/etc/letsencrypt:rw
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - default
+
+  n8n:
+    <<: *shared
+    ports:
+      - "5678:5678"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5678/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  n8n-worker:
+    <<: *shared
+    command: worker
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "8092:80"
+      - "8445:80"
+    volumes:
+      - ./nginx/nginx.conf.template:/tmp/nginx.conf.template:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-conf:/etc/letsencrypt:ro
+    environment:
+      - DOMAIN=${DOMAIN}
+    command: /bin/sh -c "envsubst < /tmp/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+    networks:
+      - default
+    depends_on:
+      - n8n
+      - open-webui
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPENWEBUI_VERSION}
+    container_name: open-webui
+    restart: always
+    ports:
+      - "${OPENWEBUI_PORT}:8080"
+    environment:
+      - WEBUI_SECRET_KEY=${OPENWEBUI_SECRET_KEY}
+      - OPENAI_API_BASE_URL=http://analytics-agent:8000/v1
+      - OPENAI_API_KEY=aiviary-analytics-agent
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - open-webui:/app/backend/data
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analytics-agent:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--spider", "--tries=1", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_NON_ROOT_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_NON_ROOT_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./database/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./database/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:${REDIS_VERSION}
+    restart: always
+    volumes:
+      - redis_storage:/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  credential-receiver:
+    build:
+      context: ./credential-receiver
+    container_name: credential-receiver
+    restart: always
+    environment:
+      - VM_API_KEY=${VM_API_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=analytics
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - CLIENT_ID=client
+      - PORT=3006
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3006:3006"
+
+  meta-ads-mcp:
+    build:
+      context: ./meta-ads-mcp
+    container_name: meta-ads-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://credential-receiver:3006
+      - PORT=3004
+    networks:
+      - default
+    depends_on:
+      - credential-receiver
+    ports:
+      - "3004:3004"
+
+  instagram-analytics-mcp:
+    build:
+      context: ./instagram-analytics-mcp
+    container_name: instagram-analytics-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://credential-receiver:3006
+      - PORT=3005
+    networks:
+      - default
+    depends_on:
+      - credential-receiver
+    ports:
+      - "3005:3005"
+
+  meta-ad-library-mcp:
+    build:
+      context: ./meta-ad-library-mcp
+    container_name: meta-ad-library-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://credential-receiver:3006
+      - PORT=3007
+    networks:
+      - default
+    depends_on:
+      - credential-receiver
+    ports:
+      - "3007:3007"
+
+  sync-worker:
+    build:
+      context: ./sync-worker
+    container_name: sync-worker
+    restart: always
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=analytics
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - CLIENT_ID=client
+      - CREDENTIAL_RECEIVER_URL=http://credential-receiver:3006
+      - NODE_ENV=production
+      - LOG_LEVEL=debug
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+      credential-receiver:
+        condition: service_started
+
+  enrichment-worker:
+    build:
+      context: ./enrichment-worker
+    container_name: enrichment-worker
+    restart: always
+    volumes:
+      - ./credentials:/app/credentials:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=analytics
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - VERTEX_AI_LOCATION=${VERTEX_AI_LOCATION}
+      - CLIENT_ID=client
+      - LOG_LEVEL=info
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  analytics-agent:
+    build:
+      context: ./analytics-agent
+    container_name: analytics-agent
+    restart: always
+    volumes:
+      - ./credentials:/app/credentials:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=analytics
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - VERTEX_AI_LOCATION=${VERTEX_AI_LOCATION}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    networks:
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client-cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ${CLIENT_ID_BROKER:-client}-cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - default
