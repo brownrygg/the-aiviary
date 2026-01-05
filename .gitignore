@@ -1,0 +1,42 @@
+# Parent-level .gitignore
+# This allows child projects to have their own git repos
+
+# Environment files (parent level if any)
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Notes (personal)
+NOTES.md
+TODO.md
+scratch/
+
+# Don't ignore child repos - they manage their own .git
+# (no need to exclude, git will respect nested .git directories)
