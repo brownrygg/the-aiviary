@@ -4,7 +4,7 @@
 
 **Initial Issue:** n8n workflows need Meta API access tokens to call MCP servers, but storing/passing tokens through workflows is insecure and messy.
 
-**Solution:** MCP servers fetch credentials themselves from the credential-receiver service.
+**Solution:** MCP servers fetch credentials themselves from the aiviary-connect service.
 
 ---
 
@@ -25,7 +25,7 @@ POST https://clienta.com/api/credentials
   ...
 }
          ↓
-Credential Receiver (port 3006)
+Aiviary Connect (port 3006)
   - Encrypts access_token (AES-256)
   - Stores in NocoDB table: meta_credentials
          ↓
@@ -61,8 +61,8 @@ Step 2: HTTP Request to Instagram MCP
 Step 3: Instagram MCP server receives request
    Internal flow:
 
-   a) Fetch credentials from credential-receiver:
-      GET http://credential-receiver:3006/api/credentials/token
+   a) Fetch credentials from aiviary-connect:
+      GET http://aiviary-connect:3006/api/credentials/token
 
       Response: {
         "access_token": "EAABwzLix...",  (decrypted)
@@ -156,7 +156,7 @@ All MCP servers follow this pattern:
 
 async function getAccessToken() {
   const response = await axios.get(
-    'http://credential-receiver:3006/api/credentials/token'
+    'http://aiviary-connect:3006/api/credentials/token'
   );
 
   if (response.data.token_expired) {
@@ -191,7 +191,7 @@ app.post('/mcp', async (req, res) => {
 - ENCRYPTION_KEY stored in .env (never committed)
 
 **Layer 2: Network Isolation**
-- credential-receiver only accessible on Docker internal network
+- aiviary-connect only accessible on Docker internal network
 - No public exposure of `/api/credentials/token`
 - MCP servers also internal-only
 
@@ -252,7 +252,7 @@ app.post('/mcp', async (req, res) => {
    { "method": "get_recent_media" }
    ↓
 09:00:02 - Instagram MCP fetches token
-   GET http://credential-receiver:3006/api/credentials/token
+   GET http://aiviary-connect:3006/api/credentials/token
    ↓
 09:00:03 - Instagram MCP calls Meta API
    GET https://graph.facebook.com/v18.0/.../media
@@ -316,7 +316,7 @@ Should return:
 ### ✅ Test 4: Check Logs
 
 ```bash
-docker compose logs -f credential-receiver
+docker compose logs -f aiviary-connect
 ```
 
 Should see:
