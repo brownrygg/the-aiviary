@@ -1,0 +1,31 @@
+# FastAPI and dependencies
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Database - SQLAlchemy with async support
+sqlalchemy==2.0.25
+asyncpg==0.29.0  # PostgreSQL async driver
+alembic==1.13.1  # Database migrations (optional but recommended)
+
+# Authentication - JWT and password hashing
+python-jose[cryptography]==3.3.0  # JWT encoding/decoding
+passlib[bcrypt]==1.7.4  # Password hashing with bcrypt
+bcrypt==3.2.0  # Downgrading for passlib compatibility
+
+# Validation
+pydantic==2.5.3
+pydantic[email]==2.5.3  # Email validation
+email-validator==2.1.0
+
+# Environment variables
+python-dotenv==1.0.0
+
+# CORS and middleware
+python-dateutil==2.8.2
+
+# HTTP client for n8n webhook requests
+aiohttp==3.9.1
+
+# Production server (optional - use gunicorn in production)
+gunicorn==21.2.0

@@ -1,0 +1,356 @@
+---
+volumes:
+  certbot-www:
+  certbot-conf:
+  db_storage:
+  n8n_storage:
+  redis_storage:
+
+# Aiviary Tree network - all services communicate on this network
+networks:
+  aiviary-network:
+    driver: bridge
+
+x-shared: &shared
+  restart: always
+  image: docker.n8n.io/n8nio/n8n:${N8N_VERSION}
+  environment:
+    - DB_TYPE=postgresdb
+    - DB_POSTGRESDB_HOST=postgres
+    - DB_POSTGRESDB_PORT=${POSTGRES_PORT}
+    - DB_POSTGRESDB_DATABASE=n8n_db
+    - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+    - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    - EXECUTIONS_MODE=queue
+    - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+    - GENERIC_TIMEZONE=${TIMEZONE}
+    - NODE_FUNCTION_ALLOW_BUILTIN=*
+    - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    - N8N_TRUST_PROXY=127.0.0.1
+    - N8N_PROXY_HOPS=1
+    - N8N_TELEMETRY_DISABLED=true
+    - N8N_RUNNERS_ENABLED=true
+    - N8N_SECURE_COOKIE=false
+    - N8N_POSTHOG_DISABLE=true
+    - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+    - N8N_GIT_NODE_DISABLE_BARE_REPOS=true
+    - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+    - QUEUE_BULL_REDIS_HOST=redis
+    - QUEUE_HEALTH_CHECK_ACTIVE=true
+    - WEBHOOK_URL=${WEBHOOK_URL}
+    - VUE_APP_URL_BASE_API=${VUE_APP_URL_BASE_API}
+  networks:
+    - aiviary-network
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  # ==========================================================================
+  # INFRASTRUCTURE: Core shared services
+  # ==========================================================================
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=postgres
+      - POSTGRES_NON_ROOT_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_NON_ROOT_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./shared/database/init.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./shared/database/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    networks:
+      - aiviary-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:${REDIS_VERSION}
+    restart: always
+    volumes:
+      - redis_storage:/data
+    networks:
+      - aiviary-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "8092:80"
+      - "8445:80"
+    volumes:
+      - ./shared/nginx/nginx.conf.template:/tmp/nginx.conf.template:ro
+      - ./shared/nginx/html:/usr/share/nginx/html:ro
+      - ./shared/nginx/certs:/etc/nginx/certs:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-conf:/etc/letsencrypt:ro
+    environment:
+      - DOMAIN=${DOMAIN}
+    command: /bin/sh -c "envsubst < /tmp/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+    networks:
+      - aiviary-network
+    depends_on:
+      - n8n
+      - aiviary-chat-frontend
+      - aiviary-chat-backend
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["production"]
+    volumes:
+      - certbot-www:/var/www/certbot:rw
+      - certbot-conf:/etc/letsencrypt:rw
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - aiviary-network
+
+  # ==========================================================================
+  # WORKFLOW: n8n automation engine
+  # ==========================================================================
+
+  n8n:
+    <<: *shared
+    ports:
+      - "5678:5678"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5678/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  n8n-worker:
+    <<: *shared
+    command: worker
+
+  # ==========================================================================
+  # UI: Aiviary Chat - User interface for AI chat
+  # ==========================================================================
+
+  aiviary-chat-backend:
+    build:
+      context: ./ui/aiviary-chat/backend
+    container_name: aiviary-chat-backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_NON_ROOT_USER}:${POSTGRES_NON_ROOT_PASSWORD}@postgres:5432/aiviary_chat
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - ALLOWED_ORIGINS=https://${DOMAIN},https://chat.${DOMAIN}
+      - PORT=8000
+      - HOST=0.0.0.0
+    volumes:
+      - ./ui/aiviary-chat/backend:/app
+      - /app/__pycache__
+    networks:
+      - aiviary-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  aiviary-chat-frontend:
+    build:
+      context: ./ui/aiviary-chat/frontend
+    container_name: aiviary-chat-frontend
+    restart: always
+    environment:
+      - VITE_API_URL=http://aiviary-chat-backend:8000
+    volumes:
+      - ./ui/aiviary-chat/frontend:/app
+      - /app/node_modules
+    networks:
+      - aiviary-network
+    depends_on:
+      aiviary-chat-backend:
+        condition: service_started
+
+  # ==========================================================================
+  # UI: Aiviary Connect - OAuth onboarding portal
+  # ==========================================================================
+
+  aiviary-connect:
+    build:
+      context: ./ui/aiviary-connect
+    container_name: aiviary-connect
+    restart: always
+    environment:
+      - VM_API_KEY=${VM_API_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=nest_meta
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - CLIENT_ID=client
+      - PORT=3006
+    networks:
+      - aiviary-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3006:3006"
+
+  # ==========================================================================
+  # SERVICES: Analytics Agent - AI brain
+  # ==========================================================================
+
+  analytics-agent:
+    build:
+      context: ./services/analytics-agent
+    container_name: analytics-agent
+    restart: always
+    volumes:
+      - ./shared/credentials:/app/credentials:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=nest_meta
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - VERTEX_AI_LOCATION=${VERTEX_AI_LOCATION}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    networks:
+      - aiviary-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==========================================================================
+  # NESTS: Meta Platform - Sync & Enrichment Workers
+  # ==========================================================================
+
+  meta-sync-worker:
+    build:
+      context: ./nests/meta/sync-worker
+    container_name: meta-sync-worker
+    restart: always
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=nest_meta
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - CLIENT_ID=client
+      - CREDENTIAL_RECEIVER_URL=http://aiviary-connect:3006
+      - NODE_ENV=production
+      - LOG_LEVEL=debug
+    networks:
+      - aiviary-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      aiviary-connect:
+        condition: service_started
+
+  meta-enrichment-worker:
+    build:
+      context: ./nests/meta/enrichment-worker
+    container_name: meta-enrichment-worker
+    restart: always
+    volumes:
+      - ./shared/credentials:/app/credentials:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=nest_meta
+      - POSTGRES_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - VERTEX_AI_LOCATION=${VERTEX_AI_LOCATION}
+      - CLIENT_ID=client
+      - LOG_LEVEL=info
+    networks:
+      - aiviary-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==========================================================================
+  # NESTS: Meta Platform - MCP Servers
+  # ==========================================================================
+
+  meta-ads-mcp:
+    build:
+      context: ./nests/meta/mcp/meta-ads-mcp
+    container_name: meta-ads-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://aiviary-connect:3006
+      - PORT=3004
+    networks:
+      - aiviary-network
+    depends_on:
+      - aiviary-connect
+    ports:
+      - "3004:3004"
+
+  instagram-analytics-mcp:
+    build:
+      context: ./nests/meta/mcp/instagram-analytics-mcp
+    container_name: instagram-analytics-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://aiviary-connect:3006
+      - PORT=3005
+    networks:
+      - aiviary-network
+    depends_on:
+      - aiviary-connect
+    ports:
+      - "3005:3005"
+
+  meta-ad-library-mcp:
+    build:
+      context: ./nests/meta/mcp/meta-ad-library-mcp
+    container_name: meta-ad-library-mcp
+    restart: always
+    environment:
+      - CREDENTIAL_RECEIVER_URL=http://aiviary-connect:3006
+      - PORT=3007
+    networks:
+      - aiviary-network
+    depends_on:
+      - aiviary-connect
+    ports:
+      - "3007:3007"
+
+  # ==========================================================================
+  # EXTERNAL ACCESS: Cloudflare Tunnel
+  # ==========================================================================
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ${CLIENT_ID_BROKER:-client}-cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - aiviary-network
