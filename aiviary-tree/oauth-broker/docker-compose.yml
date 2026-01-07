@@ -1,7 +1,0 @@
-services:
-  oauth-broker:
-    image: app-oauth-broker:latest
-    container_name: oauth-broker
-    restart: always
-    ports:
-      - "8080:80"
