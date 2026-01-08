@@ -86,8 +86,8 @@ read -p "Enter your Anthropic API Key (for the agent's brain): " ANTHROPIC_API_K
 
 # --- Auto-construct values ---
 CLIENT_ID="${CLIENT_NAME}"
-DOMAIN="${CLIENT_NAME}.rikkcontent.com"
-OAUTH_BROKER_URL="https://oauth.rikkcontent.com"
+DOMAIN="${CLIENT_NAME}.theaiviary.com"
+OAUTH_BROKER_URL="https://oauth.theaiviary.com"
 
 # --- Clean up inputs (remove trailing whitespace) ---
 CLIENT_NAME=$(echo "$CLIENT_NAME" | sed 's/[[:space:]]*$//')
@@ -121,7 +121,7 @@ VM_API_KEY=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 32)
 POSTGRES_NON_ROOT_PASSWORD=$(openssl rand -hex 32)
-OPENWEBUI_SECRET_KEY=$(openssl rand -hex 16)
+JWT_SECRET_KEY=$(openssl rand -hex 32)
 
 # --- Create .env from .env.example and substitute values ---
 cp app/.env.example app/.env
@@ -135,18 +135,19 @@ sed -i "s|N8N_DOMAIN=.*|N8N_DOMAIN=${DOMAIN}|" app/.env
 sed -i "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" app/.env
 sed -i "s|POSTGRES_NON_ROOT_PASSWORD=.*|POSTGRES_NON_ROOT_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}|" app/.env
 sed -i "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=${ENCRYPTION_KEY}|" app/.env
-sed -i "s|OPENWEBUI_SECRET_KEY=.*|OPENWEBUI_SECRET_KEY=${OPENWEBUI_SECRET_KEY}|" app/.env
+sed -i "s|JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${JWT_SECRET_KEY}|" app/.env
 sed -i "s|GOOGLE_API_KEY=.*|GOOGLE_API_KEY=${GOOGLE_API_KEY}|" app/.env
 sed -i "s|ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}|" app/.env
 sed -i "s|CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}|" app/.env
 sed -i "s|CLIENT_ID_BROKER=.*|CLIENT_ID_BROKER=${CLIENT_ID}|" app/.env
+sed -i "s|COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=aiviary-${CLIENT_ID}|" app/.env
 
 print_success "'app/.env' file has been securely configured."
 
 # --- Update onboarding page with OAuth broker URL and Client ID ---
 print_info "Configuring onboarding page with OAuth broker details..."
-sed -i "s|const OAUTH_BROKER_URL = '.*';|const OAUTH_BROKER_URL = '${OAUTH_BROKER_URL}';|" app/nginx/html/index.html
-sed -i "s|const CLIENT_ID = '.*';|const CLIENT_ID = '${CLIENT_ID}';|" app/nginx/html/index.html
+sed -i "s|const OAUTH_BROKER_URL = '.*';|const OAUTH_BROKER_URL = '${OAUTH_BROKER_URL}';|" app/shared/nginx/html/index.html
+sed -i "s|const CLIENT_ID = '.*';|const CLIENT_ID = '${CLIENT_ID}';|" app/shared/nginx/html/index.html
 print_success "Onboarding page configured."
 
 # ============================================================================
@@ -154,7 +155,7 @@ print_success "Onboarding page configured."
 # ============================================================================
 print_header "Step 4a: Setting File Permissions"
 print_info "Ensuring migration files are readable by the database container..."
-chmod -R 644 app/database/migrations/*.sql
+chmod -R 644 app/shared/database/migrations/*.sql
 print_success "Migration file permissions have been set."
 
 # ============================================================================
@@ -260,6 +261,43 @@ fi
 print_success "All services have been started in the background."
 
 # ============================================================================
+# 5a. POST-STARTUP DATABASE FIXES
+# ============================================================================
+print_header "Step 5a: Configuring Database Permissions"
+
+print_info "Waiting for PostgreSQL to be fully ready..."
+sleep 10
+
+# Fix database permissions for workers
+print_info "Granting table permissions to worker user..."
+(cd app && docker compose exec -T postgres psql -U rikk -d nest_meta -c "
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"postgres-non-root\";
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"postgres-non-root\";
+" 2>/dev/null) && print_success "Database permissions configured." || print_warning "Could not set permissions (may already be set)."
+
+# Ensure enrichment_jobs table exists
+print_info "Ensuring enrichment_jobs table exists..."
+(cd app && docker compose exec -T postgres psql -U rikk -d nest_meta -c "
+CREATE TABLE IF NOT EXISTS enrichment_jobs (
+    id SERIAL PRIMARY KEY,
+    client_id VARCHAR(255) NOT NULL,
+    content_id VARCHAR(255) NOT NULL,
+    content_type VARCHAR(100) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    attempts INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(client_id, content_id, content_type)
+);
+CREATE INDEX IF NOT EXISTS idx_enrichment_jobs_status ON enrichment_jobs(status, created_at);
+GRANT ALL PRIVILEGES ON enrichment_jobs TO \"postgres-non-root\";
+GRANT USAGE, SELECT ON SEQUENCE enrichment_jobs_id_seq TO \"postgres-non-root\";
+" 2>/dev/null) && print_success "Enrichment jobs table ready." || print_warning "Could not create enrichment_jobs table (may already exist)."
+
+# ============================================================================
 # 6. FINAL INSTRUCTIONS
 # ============================================================================
 print_header "🎉 SETUP COMPLETE! Your Content Aiviary is running. 🎉"
@@ -268,17 +306,11 @@ echo "Your system is now live and waiting for you to connect your Meta account."
 echo ""
 echo -e "${YELLOW}-------------------[ ACCESS YOUR AIVIARY ]-------------------${NC}"
 echo ""
-echo -e "  - OpenWebUI Interface:  ${GREEN}http://localhost:4002${NC}"
-echo -e "  - Public Domain:        ${GREEN}https://${DOMAIN}${NC}"
+echo -e "  - Connect & Chat: ${GREEN}https://${DOMAIN}${NC}"
+echo -e "  - n8n Workflows:  ${GREEN}https://n8n.${DOMAIN}${NC} (via tunnel)"
+echo -e "  - n8n (local):    ${GREEN}http://localhost:5678${NC}"
 echo ""
-echo "When you first open OpenWebUI, create your local admin account."
-echo ""
-echo -e "${YELLOW}-----------[ YOUR PRE-CONFIGURED ANALYTICS AGENT ]-----------${NC}"
-echo ""
-echo "Your 'Aiviary Analytics Agent' is ready to use:"
-echo "  1. In OpenWebUI, click the model selector at the top."
-echo -e "  2. Select '${GREEN}Aiviary Analytics Agent${NC}' from the list."
-echo "  3. Start asking questions! (Note: It will only have data after the next steps)."
+echo "Visit your domain to connect your Meta account, then proceed to chat."
 echo ""
 echo -e "${YELLOW}----------[ CRITICAL NEXT STEPS: AUTH & SYNC ]----------${NC}"
 echo ""
@@ -289,20 +321,37 @@ echo "     Your client VM has been registered with the OAuth broker."
 echo "     You can verify this at: ${GREEN}${OAUTH_BROKER_URL}/admin/clients${NC}"
 echo ""
 echo -e "  ${BLUE}1. Connect Your Meta Account:${NC}"
-echo "     Go to your public domain to view the onboarding page and click the 'Connect' button."
+echo "     Go to your domain and click the 'Connect' button next to Meta/Instagram."
 echo -e "     URL: ${GREEN}https://${DOMAIN}${NC}"
 echo ""
 echo -e "  ${BLUE}2. Verify Credential Receipt & Automated Backfill Trigger:${NC}"
-echo "     After completing the OAuth flow, check the logs to see your credentials arrive."
-echo "     The initial data backfill will be triggered automatically upon successful credential storage."
+echo "     After completing the OAuth flow, you'll be redirected back to the connect page."
+echo "     The initial data backfill will be triggered automatically."
 echo "     Run this command in a new terminal to monitor:"
-echo -e "     ${GREEN}cd app && docker compose logs -f credential-receiver${NC}"
+echo -e "     ${GREEN}cd app && docker compose logs -f aiviary-connect${NC}"
 echo "     (You should see a 'Credentials received and stored' message and a 'Created backfill job' message.)"
 echo ""
-echo -e "  ${BLUE}3. Monitor the Sync Progress:${NC}"
+echo -e "  ${BLUE}3. Access the Chat:${NC}"
+echo "     Once connected, click 'Proceed to Nest' or navigate to /chat."
+echo "     Register an account in Aiviary Chat to create your team."
+echo -e "     URL: ${GREEN}https://${DOMAIN}/chat${NC}"
+echo ""
+echo -e "  ${BLUE}4. Monitor the Sync Progress:${NC}"
 echo "     Your data will now begin to sync. You can monitor the progress with:"
-echo -e "     - Data Fetching: ${GREEN}cd app && docker compose logs -f sync-worker${NC}"
-echo -e "     - AI Enrichment: ${GREEN}cd app && docker compose logs -f enrichment-worker${NC}"
+echo -e "     - Data Fetching: ${GREEN}cd app && docker compose logs -f meta-sync-worker${NC}"
+echo -e "     - AI Enrichment: ${GREEN}cd app && docker compose logs -f meta-enrichment-worker${NC}"
+echo ""
+echo -e "${YELLOW}----------[ CLOUDFLARE TUNNEL CONFIGURATION ]----------${NC}"
+echo ""
+echo -e "  Your Cloudflare tunnel should route the root domain (${DOMAIN})."
+echo "  Optionally, add the n8n subdomain for admin access:"
+echo ""
+echo "     1. Go to your Cloudflare Zero Trust Dashboard"
+echo "     2. Navigate to Networks → Tunnels → Your tunnel → Public Hostnames"
+echo "     3. Add a new public hostname (optional):"
+echo -e "        - Subdomain: ${GREEN}n8n${NC}"
+echo -e "        - Domain: ${GREEN}${CLIENT_NAME}.theaiviary.com${NC}"
+echo -e "        - Service: ${GREEN}http://nginx:80${NC}"
 echo ""
 echo "-------------------------------------------------------------------"
 echo ""

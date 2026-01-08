@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',  // Listen on all network interfaces
     port: 3000,
+    allowedHosts: ['localhost', '.theaiviary.com'],  // Allow dev and production hosts
     proxy: {
       '/api': {
         target: 'http://backend:8000',

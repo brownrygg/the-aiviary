@@ -277,4 +277,18 @@ export const chatAPI = {
   },
 };
 
+// Connect API (proxied to aiviary-connect via /api/connect/)
+export const connectAPI = {
+  getStatus: async () => {
+    // Uses public endpoint - no auth required
+    const response = await fetch('/api/connect/credentials/status');
+    return response.json();
+  },
+
+  getSyncStatus: async () => {
+    const response = await fetch('/api/connect/sync-status');
+    return response.json();
+  },
+};
+
 export default apiClient;

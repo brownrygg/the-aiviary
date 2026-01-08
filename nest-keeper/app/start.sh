@@ -21,6 +21,12 @@ sleep 5
 echo "📊 Service Status:"
 docker compose ps
 
+# Get BASE_URL from .env if available
+if [ -f ".env" ]; then
+    BASE_URL=$(grep "^BASE_URL=" .env | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+fi
+BASE_URL=${BASE_URL:-"https://oauth.theaiviary.com"}
+
 echo ""
-echo "🔗 Public endpoint: https://meta-oauth.rikkcontent.com/health"
+echo "🔗 Public endpoint: ${BASE_URL}/health"
 echo ""

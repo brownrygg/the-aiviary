@@ -27,7 +27,7 @@ docker compose restart credential-receiver
 
 ## OAuth Link
 ```
-https://meta-oauth.rikkcontent.com/auth/meta?client_id=<YOUR_CLIENT_ID>
+https://oauth.theaiviary.com/auth/meta?client_id=<YOUR_CLIENT_ID>
 ```
 
 ## Monitoring

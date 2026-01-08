@@ -16,11 +16,7 @@ CREATE TABLE IF NOT EXISTS client_vm_registry (
   -- Metadata
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
-  last_oauth_at TIMESTAMP,
-
-  -- Index for fast lookups
-  CONSTRAINT unique_client_id UNIQUE (client_id),
-  CONSTRAINT unique_vm_url UNIQUE (vm_url)
+  last_oauth_at TIMESTAMP
 );
 
 -- OAuth Events Log: Track all OAuth flows
@@ -49,14 +45,14 @@ CREATE TABLE IF NOT EXISTS oauth_events (
   forwarding_response TEXT,
 
   -- Timestamps
-  created_at TIMESTAMP DEFAULT NOW(),
-
-  -- Indexes
-  INDEX idx_client_id (client_id),
-  INDEX idx_event_type (event_type),
-  INDEX idx_created_at (created_at),
-  INDEX idx_platform (platform)
+  created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Indexes for oauth_events (PostgreSQL syntax)
+CREATE INDEX IF NOT EXISTS idx_oauth_client_id ON oauth_events(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_event_type ON oauth_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_oauth_created_at ON oauth_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_platform ON oauth_events(platform);
 
 -- App Testers: Track which Meta users are registered as testers
 CREATE TABLE IF NOT EXISTS app_testers (
@@ -76,10 +72,12 @@ CREATE TABLE IF NOT EXISTS app_testers (
   -- Notes
   notes TEXT,
 
-  CONSTRAINT fk_client FOREIGN KEY (client_id) REFERENCES client_vm_registry(client_id),
-  INDEX idx_client_tester (client_id),
-  INDEX idx_facebook_user (facebook_user_id)
+  CONSTRAINT fk_client FOREIGN KEY (client_id) REFERENCES client_vm_registry(client_id)
 );
+
+-- Indexes for app_testers
+CREATE INDEX IF NOT EXISTS idx_tester_client ON app_testers(client_id);
+CREATE INDEX IF NOT EXISTS idx_tester_facebook ON app_testers(facebook_user_id);
 
 -- Create updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -90,20 +88,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Drop trigger if exists (for idempotency)
+DROP TRIGGER IF EXISTS update_client_vm_registry_updated_at ON client_vm_registry;
+
 CREATE TRIGGER update_client_vm_registry_updated_at
   BEFORE UPDATE ON client_vm_registry
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
-
--- Insert a sample client for testing
-INSERT INTO client_vm_registry (client_id, client_name, vm_url, vm_api_key, status)
-VALUES (
-  'test-client-a',
-  'Test Client A',
-  'https://clienta-stack.yourdomain.com',
-  'change_this_to_secure_api_key',
-  'active'
-) ON CONFLICT (client_id) DO NOTHING;
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO oauth_user;

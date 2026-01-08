@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './components/LoginPage';
+import ConnectPage from './components/ConnectPage';
 import ChatLayout from './components/ChatLayout';
 import ChatArea from './components/ChatArea';
 import AdminPage from './components/AdminPage';
@@ -9,9 +10,21 @@ function App() {
   return (
     <Router>
       <Routes>
+        {/* Public routes */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Main Chat Routes */}
+        {/* Protected Connect Page */}
+        <Route
+          path="/connect"
+          element={
+            <ProtectedRoute>
+              <ConnectPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected Chat Routes */}
         <Route
           element={
             <ProtectedRoute>
@@ -19,8 +32,8 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<ChatArea />} />
-          <Route path="/c/:chatId" element={<ChatArea />} />
+          <Route path="/chat" element={<ChatArea />} />
+          <Route path="/chat/:chatId" element={<ChatArea />} />
         </Route>
 
         <Route
@@ -31,7 +44,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>
   );

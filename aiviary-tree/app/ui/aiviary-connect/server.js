@@ -413,9 +413,69 @@ app.get('/api/credentials/status', async (req, res) => {
 });
 
 // ============================================================================
-// ONBOARDING SUCCESS PAGE
+// GET SYNC STATUS FOR BACKFILL PROGRESS
+// ============================================================================
+app.get('/api/sync-status', async (req, res) => {
+  try {
+    const CLIENT_ID = process.env.CLIENT_ID || 'client';
+
+    // Check sync_status table for backfill progress
+    const statusResult = await pool.query(
+      `SELECT backfill_started_at, backfill_completed, backfill_completed_at, backfill_error
+       FROM sync_status WHERE client_id = $1 LIMIT 1`,
+      [CLIENT_ID]
+    );
+
+    if (statusResult.rows.length === 0) {
+      // Check sync_jobs for pending backfill
+      const jobResult = await pool.query(
+        `SELECT id, status, created_at FROM sync_jobs
+         WHERE client_id = $1 AND job_type = 'backfill'
+         ORDER BY created_at DESC LIMIT 1`,
+        [CLIENT_ID]
+      );
+
+      if (jobResult.rows.length > 0) {
+        const job = jobResult.rows[0];
+        return res.json({
+          syncing: job.status === 'pending' || job.status === 'processing',
+          started_at: null,
+          completed: false,
+          status: job.status === 'pending' ? 'queued' : 'processing'
+        });
+      }
+
+      return res.json({
+        syncing: false,
+        started_at: null,
+        completed: false,
+        status: 'no_sync'
+      });
+    }
+
+    const sync = statusResult.rows[0];
+    res.json({
+      syncing: sync.backfill_started_at && !sync.backfill_completed,
+      started_at: sync.backfill_started_at,
+      completed: sync.backfill_completed || false,
+      completed_at: sync.backfill_completed_at,
+      error: sync.backfill_error,
+      status: sync.backfill_completed ? 'completed' : sync.backfill_started_at ? 'syncing' : 'pending'
+    });
+
+  } catch (err) {
+    console.error('[Error fetching sync status]', err.message);
+    res.status(500).json({ error: 'Failed to fetch sync status' });
+  }
+});
+
+// ============================================================================
+// ONBOARDING SUCCESS PAGE (with auto-redirect)
 // ============================================================================
 app.get('/onboard/success', (req, res) => {
+  const host = req.get('host') || 'localhost';
+  const baseUrl = `https://${host}`;
+
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
@@ -423,11 +483,14 @@ app.get('/onboard/success', (req, res) => {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Connection Successful!</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:wght@500;600&display=swap" rel="stylesheet">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          font-family: 'Inter', -apple-system, sans-serif;
+          background: linear-gradient(180deg, #C2E0FF 0%, #F7F5F0 100%);
           min-height: 100vh;
           display: flex;
           align-items: center;
@@ -435,83 +498,38 @@ app.get('/onboard/success', (req, res) => {
           padding: 20px;
         }
         .container {
-          background: white;
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: blur(16px);
           border-radius: 20px;
           padding: 60px 40px;
           max-width: 500px;
           text-align: center;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          box-shadow: 0 20px 60px rgba(44, 74, 82, 0.15);
+          border: 1px solid rgba(255, 255, 255, 0.9);
         }
-        .success-icon {
-          font-size: 80px;
-          margin-bottom: 20px;
-          animation: bounce 1s ease;
-        }
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-20px); }
-        }
+        .success-icon { font-size: 80px; margin-bottom: 20px; animation: bounce 1s ease; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-20px); } }
         h1 {
-          color: #333;
+          font-family: 'Lora', serif;
+          color: #2C4A52;
           font-size: 32px;
           margin-bottom: 20px;
-          font-weight: 700;
+          font-weight: 600;
         }
-        p {
-          color: #666;
-          font-size: 18px;
-          line-height: 1.6;
-          margin-bottom: 15px;
-        }
-        .detail {
-          background: #f8f9fa;
-          padding: 20px;
-          border-radius: 10px;
-          margin: 30px 0;
-        }
-        .detail strong {
-          color: #667eea;
-          display: block;
-          margin-bottom: 10px;
-          font-size: 14px;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-        }
-        .detail p {
-          font-size: 16px;
-          margin-bottom: 0;
-        }
-        .footer {
-          margin-top: 30px;
-          padding-top: 20px;
-          border-top: 1px solid #e0e0e0;
-          color: #999;
-          font-size: 14px;
-        }
-        .skynet {
-          font-size: 12px;
-          color: #ccc;
-          margin-top: 10px;
-          font-style: italic;
-        }
+        p { color: #6B7C85; font-size: 18px; line-height: 1.6; margin-bottom: 15px; }
+        .status { font-size: 14px; color: #6B7C85; margin-top: 20px; }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="success-icon">🎉</div>
-        <h1>SUCCESS!</h1>
-        <p>Your Instagram and Meta Ads accounts are now connected!</p>
-
-        <div class="detail">
-          <strong>What happens next?</strong>
-          <p>Our AI-powered analytics engine is now syncing your data. You'll start seeing insights, competitor intelligence, and performance recommendations shortly.</p>
-        </div>
-
-        <div class="footer">
-          <p>You can close this window and return to your dashboard.</p>
-          <p class="skynet">Now deploying Skynet... (jk 🤖)</p>
-        </div>
+        <h1>Connected!</h1>
+        <p>Your platform is now connected. Redirecting...</p>
+        <p class="status">Starting data sync...</p>
       </div>
+      <script>
+        setTimeout(() => { window.location.href = '${baseUrl}/connect?connected=true'; }, 2000);
+      </script>
     </body>
     </html>
   `);

@@ -18,7 +18,7 @@ http {
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
 
-    # Upstream definitions for Aiviary Chat
+    # Upstream definitions
     upstream chat_frontend {
         server aiviary-chat-frontend:3000;
     }
@@ -32,62 +32,14 @@ http {
     }
 
     # ==========================================================================
-    # Server 1: Onboarding Dashboard (root domain)
-    # Example: clienta.rikkcontent.com
-    # Cloudflare Tunnel routes here
+    # Main Domain - Serves Everything (Single Domain Architecture)
+    # Example: ocean.theaiviary.com
     # ==========================================================================
     server {
         listen 80;
         server_name ${DOMAIN};
 
-        # Root location serves the static onboarding page
-        location / {
-            root   /usr/share/nginx/html;
-            index  index.html;
-        }
-
-        # OAuth success page
-        location /onboard/success {
-            root   /usr/share/nginx/html;
-            try_files /success.html =404;
-        }
-
-        # API endpoints for credential status (proxied to Aiviary Connect)
-        location /api/credentials {
-            proxy_pass http://aiviary-connect:3006/api/credentials;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location /api/credentials/status {
-            proxy_pass http://aiviary-connect:3006/api/credentials/status;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        # Health check endpoint
-        location /health {
-            return 200 'ok';
-            add_header Content-Type text/plain;
-        }
-    }
-
-    # ==========================================================================
-    # Server 2: Chat Interface (chat subdomain)
-    # Example: chat.clienta.rikkcontent.com
-    # Cloudflare Tunnel routes here
-    # ==========================================================================
-    server {
-        listen 80;
-        server_name chat.${DOMAIN};
-
-        # Frontend - React app (Vite dev server)
+        # React Frontend (handles all routes: /, /chat, /login, /admin)
         location / {
             proxy_pass http://chat_frontend;
             proxy_http_version 1.1;
@@ -102,7 +54,7 @@ http {
             proxy_read_timeout 86400;
         }
 
-        # Backend API
+        # Chat Backend API
         location /api {
             proxy_pass http://chat_backend;
             proxy_http_version 1.1;
@@ -117,8 +69,37 @@ http {
             proxy_read_timeout 300s;
         }
 
+        # Aiviary Connect API (for connection status, sync status)
+        location /api/connect/ {
+            proxy_pass http://aiviary-connect:3006/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Legacy /api/credentials support (for OAuth broker callback)
+        location /api/credentials {
+            proxy_pass http://aiviary-connect:3006/api/credentials;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # OAuth Success Redirect (after broker sends credentials)
+        location /onboard/success {
+            proxy_pass http://aiviary-connect:3006/onboard/success;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
         # Analytics Agent API (OpenAI-compatible)
-        # Agents configure webhook_url to point here
         location /v1 {
             proxy_pass http://analytics_agent;
             proxy_http_version 1.1;
@@ -133,7 +114,7 @@ http {
             proxy_read_timeout 300s;
         }
 
-        # Health check
+        # Health check endpoint
         location /health {
             return 200 'ok';
             add_header Content-Type text/plain;
@@ -141,8 +122,8 @@ http {
     }
 
     # ==========================================================================
-    # Server 3: n8n subdomain (optional - for admin access)
-    # Example: n8n.clienta.rikkcontent.com
+    # n8n Admin Subdomain (for admin access)
+    # Example: n8n.ocean.theaiviary.com
     # ==========================================================================
     server {
         listen 80;

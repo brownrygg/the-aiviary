@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { chatAPI, authAPI } from '../api/client';
+import AiviaryConnectDrawer from './AiviaryConnectDrawer';
 
 const ChatHistorySidebar = ({ isOpen, onClose }) => {
     const navigate = useNavigate();
@@ -16,6 +17,7 @@ const ChatHistorySidebar = ({ isOpen, onClose }) => {
     // I'll leave sidebar as is for now to avoid regression risk, focusing on ChatArea.
     const [chatToDelete, setChatToDelete] = useState(null); // ID of chat to delete
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isConnectDrawerOpen, setIsConnectDrawerOpen] = useState(false);
 
     const loadChats = async () => {
         try {
@@ -43,12 +45,12 @@ const ChatHistorySidebar = ({ isOpen, onClose }) => {
     }, [chatId]);
 
     const handleNewChat = () => {
-        navigate('/');
+        navigate('/chat');
         if (window.innerWidth < 1024) onClose();
     };
 
     const handleChatClick = (id) => {
-        navigate(`/c/${id}`);
+        navigate(`/chat/${id}`);
         if (window.innerWidth < 1024) onClose();
     };
 
@@ -74,7 +76,7 @@ const ChatHistorySidebar = ({ isOpen, onClose }) => {
             await chatAPI.deleteChat(chatToDelete.id);
             setChats(chats.filter(c => c.id !== chatToDelete.id));
             if (chatId === chatToDelete.id) {
-                navigate('/');
+                navigate('/chat');
             }
             setChatToDelete(null);
         } catch (error) {
@@ -163,20 +165,40 @@ const ChatHistorySidebar = ({ isOpen, onClose }) => {
                         </div>
                     </div>
 
-                    {user?.role === 'admin' && (
+                    <div className="flex items-center space-x-1">
+                        {/* Connect Platforms button - visible to all users */}
                         <button
-                            onClick={handleAdminClick}
-                            title="Admin Settings"
-                            className="p-1.5 text-neutral-slate hover:text-brand-teal hover:bg-brand-teal/10 rounded-lg transition-colors"
+                            onClick={() => setIsConnectDrawerOpen(true)}
+                            title="Connect Platforms"
+                            className="p-1.5 text-neutral-slate hover:text-brand-clay hover:bg-brand-clay/10 rounded-lg transition-colors"
                         >
                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                             </svg>
                         </button>
-                    )}
+
+                        {/* Admin Settings button - admin only */}
+                        {user?.role === 'admin' && (
+                            <button
+                                onClick={handleAdminClick}
+                                title="Admin Settings"
+                                className="p-1.5 text-neutral-slate hover:text-brand-teal hover:bg-brand-teal/10 rounded-lg transition-colors"
+                            >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
+
+            {/* Aiviary Connect Drawer */}
+            <AiviaryConnectDrawer
+                isOpen={isConnectDrawerOpen}
+                onClose={() => setIsConnectDrawerOpen(false)}
+            />
 
             {/* Delete Confirmation Modal */}
             {

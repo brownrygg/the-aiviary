@@ -67,7 +67,7 @@ const LoginPage = () => {
     try {
       if (isLogin) {
         await authAPI.login(formData.email, formData.password);
-        navigate('/');
+        navigate('/connect');
       } else {
         // Register (Bootstrap)
         await authAPI.register({
@@ -78,7 +78,7 @@ const LoginPage = () => {
 
         // Auto-login after successful registration
         await authAPI.login(formData.email, formData.password);
-        navigate('/');
+        navigate('/connect');
       }
     } catch (error) {
       console.error('Auth error:', error);
